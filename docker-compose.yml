@@ -1,0 +1,40 @@
+# Provisions the two databases the benchmark compares.
+#
+# Notes:
+# - Postgres uses the container's normal writable layer (NOT tmpfs) so its write
+#   path is disk-backed, keeping the latency comparison against MongoDB fair.
+# - mongodb-atlas-local ships its own healthcheck (mongod + mongot + seed
+#   scripts). Do NOT add a `command:` here -- it overrides the image entrypoint
+#   and the deployment will not initialize. Connect with `?directConnection=true`.
+# - DO_NOT_TRACK=1 skips the telemetry startup work added in the 8.3.x line,
+#   which otherwise slows container boot considerably.
+# - No named volumes: `docker compose down` leaves a clean slate for the next run.
+# - Host ports are deliberately NON-standard (55432 / 57017, not 5432 / 27017).
+#   The benchmark DROPs its table/collection on every run, so it is bound to this
+#   stack on purpose -- non-standard ports mean it cannot accidentally connect to
+#   a real Postgres/MongoDB you happen to be running locally. These ports must
+#   match the constants in bench/common.py.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: macrostrategy-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bench
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bench"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  mongodb:
+    image: mongodb/mongodb-atlas-local:8.3
+    container_name: macrostrategy-atlas
+    environment:
+      DO_NOT_TRACK: "1"
+    ports:
+      - "57017:27017"

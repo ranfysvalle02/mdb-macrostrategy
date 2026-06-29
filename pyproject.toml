@@ -1,0 +1,39 @@
+[project]
+name = "mdb-macrostrategy-bench"
+version = "0.1.0"
+description = "Reproducible Postgres JSONB vs MongoDB update-penalty benchmark + FastAPI dashboard"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "psycopg[binary]>=3.2",
+    "pymongo>=4.8",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
+
+# Flat collection of scripts, not an installable package.
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes, I: import sorting, B: bug-prone patterns.
+# Pylint/import-position rules are intentionally excluded so app.py's lazy
+# driver imports and the shared underscore helpers stay clean.
+select = ["E", "W", "F", "I", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "integration: end-to-end test that requires the docker-compose stack",
+]

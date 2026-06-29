@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JSONB vs MongoDB &mdash; Update Penalty Benchmark</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="title">
+      <h1>The JSONB Update Penalty</h1>
+      <p class="subtitle">A reproducible, falsifiable benchmark: PostgreSQL <code>jsonb</code> vs MongoDB field-level updates on large documents.</p>
+    </div>
+    <div class="health" id="health">
+      <span class="badge" id="health-pg" data-state="unknown">PostgreSQL</span>
+      <span class="badge" id="health-mongo" data-state="unknown">MongoDB</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card controls">
+      <h2>Workload</h2>
+      <div class="grid">
+        <label>Documents (rows)
+          <input type="number" id="rows" value="500" min="50" step="50" />
+        </label>
+        <label>Total updates (ops)
+          <input type="number" id="ops" value="20000" min="1000" step="1000" />
+        </label>
+        <label>Concurrency (workers)
+          <input type="number" id="workers" value="4" min="1" max="32" />
+        </label>
+        <label>Document size (KB)
+          <input type="number" id="doc_kb" value="32" min="1" max="512" />
+        </label>
+        <label>Seed
+          <input type="number" id="seed" value="1234" />
+        </label>
+        <label>Trials (mean &plusmn; stdev)
+          <input type="number" id="trials" value="1" min="1" max="20" />
+        </label>
+        <label>Postgres strategy
+          <select id="pg_strategy">
+            <option value="jsonb">jsonb (mutate keys inside the doc)</option>
+            <option value="normalized">normalized (hot fields as columns)</option>
+          </select>
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" id="pg_autovacuum" checked />
+          Postgres autovacuum enabled
+        </label>
+      </div>
+      <div class="actions">
+        <button id="run" class="primary">Run benchmark</button>
+        <span id="status" class="status"></span>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-bar" id="progress"></div>
+      </div>
+      <p class="phase" id="phase"></p>
+    </section>
+
+    <section class="card results" id="results-card" hidden>
+      <h2>Results</h2>
+      <div class="charts">
+        <div class="chart-box"><canvas id="chart-throughput"></canvas></div>
+        <div class="chart-box"><canvas id="chart-latency"></canvas></div>
+        <div class="chart-box"><canvas id="chart-size"></canvas></div>
+      </div>
+      <div class="table-wrap">
+        <table id="results-table">
+          <thead><tr><th>Metric</th><th class="pg">PostgreSQL</th><th class="mongo">MongoDB</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card methodology">
+      <details>
+        <summary>Methodology &amp; Caveats (read me)</summary>
+        <ul>
+          <li><strong>What this measures:</strong> high-frequency partial updates (increment a counter, set a timestamp) to two fields buried inside a ~32 KB document. Throughput, latency percentiles, and on-disk growth are recorded from real runs.</li>
+          <li><strong>Why Postgres pays here:</strong> a ~32 KB <code>jsonb</code> value lives out-of-line in TOAST. MVCC means an update writes a whole new row version and rewrites the TOAST chunks, leaving dead tuples for autovacuum. MongoDB applies field-level operators (<code>$inc</code>/<code>$set</code>); WiredTiger is <em>also</em> an MVCC / copy-on-write engine (it does <em>not</em> edit bytes in place), but it avoids the full-row-rewrite-plus-vacuum cycle.</li>
+          <li><strong>The fairness control:</strong> switch the Postgres strategy to <code>normalized</code> &mdash; promote the hot counters to real columns &mdash; and the penalty largely disappears. This is the idiomatic Postgres fix; the demo lets you prove it.</li>
+          <li><strong>Scope:</strong> a single workload on a single machine via Docker. It is not a claim about analytics, joins, reads, or general superiority. Both engines compress on disk (PG TOAST / WiredTiger snappy). Your numbers will differ; that is the point &mdash; run it yourself.</li>
+        </ul>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <span>All figures are measured locally &mdash; nothing here is hand-written.</span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
