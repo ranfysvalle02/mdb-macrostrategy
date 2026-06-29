@@ -32,8 +32,8 @@ jobs:
       - name: Unit tests (no databases)
         run: uv run pytest -m "not integration" -q
 
-  integration:
-    name: Integration (Postgres + Atlas Local)
+  integration-basic:
+    name: Integration - basic (Postgres + Atlas Local)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,13 +48,13 @@ jobs:
         run: uv sync
 
       - name: Start databases
-        run: docker compose up -d
+        run: docker compose -f basic/docker-compose.yml up -d
 
       - name: Wait for both containers to be healthy
         run: |
           for i in $(seq 1 90); do
-            pg=$(docker inspect -f '{{.State.Health.Status}}' macrostrategy-postgres 2>/dev/null || echo starting)
-            mongo=$(docker inspect -f '{{.State.Health.Status}}' macrostrategy-atlas 2>/dev/null || echo starting)
+            pg=$(docker inspect -f '{{.State.Health.Status}}' macrostrategy-basic-postgres 2>/dev/null || echo starting)
+            mongo=$(docker inspect -f '{{.State.Health.Status}}' macrostrategy-basic-atlas 2>/dev/null || echo starting)
             echo "attempt $i: postgres=$pg mongodb=$mongo"
             if [ "$pg" = "healthy" ] && [ "$mongo" = "healthy" ]; then
               echo "Both databases healthy"; exit 0
@@ -62,13 +62,54 @@ jobs:
             sleep 5
           done
           echo "::error::Databases did not become healthy in time"
-          docker compose ps
-          docker compose logs --tail 80
+          docker compose -f basic/docker-compose.yml ps
+          docker compose -f basic/docker-compose.yml logs --tail 80
           exit 1
 
-      - name: Integration tests
-        run: uv run pytest -m integration -q
+      - name: Integration tests (basic)
+        run: uv run pytest basic/tests -m integration -q
 
       - name: Tear down
         if: always()
-        run: docker compose down -v
+        run: docker compose -f basic/docker-compose.yml down -v
+
+  integration-search:
+    name: Integration - search (pgvector + Atlas Local)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Start databases
+        run: docker compose -f search/docker-compose.yml up -d
+
+      - name: Wait for both containers to be healthy
+        run: |
+          for i in $(seq 1 90); do
+            pg=$(docker inspect -f '{{.State.Health.Status}}' macrostrategy-search-postgres 2>/dev/null || echo starting)
+            mongo=$(docker inspect -f '{{.State.Health.Status}}' macrostrategy-search-atlas 2>/dev/null || echo starting)
+            echo "attempt $i: postgres=$pg mongodb=$mongo"
+            if [ "$pg" = "healthy" ] && [ "$mongo" = "healthy" ]; then
+              echo "Both databases healthy"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Databases did not become healthy in time"
+          docker compose -f search/docker-compose.yml ps
+          docker compose -f search/docker-compose.yml logs --tail 80
+          exit 1
+
+      - name: Integration tests (search)
+        run: uv run pytest search/tests -m integration -q
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f search/docker-compose.yml down -v

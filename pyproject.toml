@@ -1,7 +1,7 @@
 [project]
 name = "mdb-macrostrategy-bench"
 version = "0.1.0"
-description = "Reproducible Postgres JSONB vs MongoDB update-penalty benchmark + FastAPI dashboard"
+description = "Reproducible Postgres-vs-MongoDB benchmarks (update penalty + search) with FastAPI dashboards"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -9,6 +9,8 @@ dependencies = [
     "pymongo>=4.8",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "numpy>=1.26",
+    "pgvector>=0.3",
 ]
 
 # Flat collection of scripts, not an installable package.
@@ -32,8 +34,8 @@ target-version = "py311"
 select = ["E", "W", "F", "I", "B"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["shared/tests", "basic/tests", "search/tests"]
 pythonpath = ["."]
 markers = [
-    "integration: end-to-end test that requires the docker-compose stack",
+    "integration: end-to-end test that requires a docker-compose stack",
 ]

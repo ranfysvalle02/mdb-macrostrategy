@@ -1,0 +1,42 @@
+# Provisions the two databases the SEARCH angle compares (full-text + vector).
+#
+# Notes:
+# - Postgres uses the `pgvector/pgvector:pg16` image: stock Postgres 16 plus the
+#   `vector` extension preinstalled (the benchmark runs `CREATE EXTENSION vector`).
+#   Full-text search (`tsvector` / GIN) is built into core Postgres, no extension.
+# - mongodb-atlas-local bundles `mongot`, so Atlas Search (`$search`) and Atlas
+#   Vector Search (`$vectorSearch`) run locally. Do NOT add a `command:` here --
+#   it overrides the image entrypoint and the deployment will not initialize.
+#   Connect with `?directConnection=true`.
+# - DO_NOT_TRACK=1 skips telemetry startup work that otherwise slows boot.
+# - No named volumes: `docker compose down` leaves a clean slate for the next run.
+# - Host ports are deliberately NON-standard AND differ from the basic/ stack
+#   (55433 / 57018 here vs 55432 / 57017 there) so the two angles can run side by
+#   side and neither can accidentally connect to a real database. These ports
+#   must match the constants in search/bench/common.py.
+# - Container names are prefixed `macrostrategy-search-*` so they never collide
+#   with the basic/ stack's `macrostrategy-basic-*` containers.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: macrostrategy-search-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bench
+    ports:
+      - "55433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bench"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  mongodb:
+    image: mongodb/mongodb-atlas-local:8.3
+    container_name: macrostrategy-search-atlas
+    environment:
+      DO_NOT_TRACK: "1"
+    ports:
+      - "57018:27017"

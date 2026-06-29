@@ -1,9 +1,10 @@
 # Winning the Document-Database Race: An Honest Assessment
 
-*An independent analysis of MongoDB's strategic position, disciplined by the small,
-reproducible benchmark included in this repository. Every performance claim is backed
-by measurable results; every strategic claim is labeled **fact** or **opinion** so it
-can be argued with. The aim is analysis, not advocacy.*
+*An independent analysis of MongoDB's strategic position, disciplined by the two
+small, reproducible benchmarks included in this repository (an update-penalty probe
+and a search probe). Every performance claim is backed by measurable results; every
+strategic claim is labeled **fact** or **opinion** so it can be argued with. The aim
+is analysis, not advocacy.*
 
 ---
 
@@ -38,9 +39,9 @@ local Docker, PostgreSQL 16.14 vs MongoDB 8.3.4 (Atlas Local).
 
 | Metric | PostgreSQL (`jsonb`) | PostgreSQL (`normalized`) | MongoDB |
 | --- | ---: | ---: | ---: |
-| Throughput (ops/s) | 4,229 ± 265 | **10,417 ± 198** | 3,561 ± 128 |
-| Latency p99 (ms) | 2.596 ± 0.913 | **0.702 ± 0.134** | 3.173 ± 0.767 |
-| Storage growth (MB) | +335.96 ± 0.02 | **+0.02** | +9.51 ± 0.12 |
+| Throughput (ops/s) | 4,189 ± 180 | **10,264 ± 403** | 3,005 ± 581 |
+| Latency p99 (ms) | 2.813 ± 0.666 | **0.781 ± 0.151** | 4.642 ± 1.106 |
+| Storage growth (MB) | +319.45 ± 36.93 | **+0.01** | +9.53 ± 0.10 |
 
 Three findings worth internalizing rather than spinning:
 
@@ -49,9 +50,9 @@ Three findings worth internalizing rather than spinning:
    full-document-rewrite-plus-vacuum cycle on a large, out-of-line (`TOAST`ed)
    `jsonb` value. The accurate phrasing is "it avoids the rewrite-and-vacuum tax,"
    not "in place."
-2. **On raw speed, naive `jsonb` edged MongoDB here** (fact): ~4,229 vs ~3,561 ops/s,
+2. **On raw speed, naive `jsonb` edged MongoDB here** (fact): ~4,189 vs ~3,005 ops/s,
    with a lower p99. MongoDB's real, large, defensible win was **storage**: `jsonb`
-   bloated the table ~336 MB; MongoDB grew ~9.5 MB for the same work.
+   bloated the table ~320 MB; MongoDB grew ~9.5 MB for the same work.
 3. **Idiomatic Postgres wins this micro-benchmark outright** (fact). Promote the hot
    field to a real column (`normalized`) and Postgres is fastest, tightest-variance,
    and barely grows. The catch: *you only get that if you already know to do it.*
@@ -61,6 +62,47 @@ beat MongoDB on this workload — **but only with schema expertise MongoDB does 
 require.** MongoDB's advantage is not speed. It is that **the natural modeling choice
 is also the efficient one.** That is the asset to protect, and most of this analysis
 is about protecting and widening it.
+
+---
+
+## The second probe: "search on the document"
+
+A second, independent benchmark in this repo ([`search/`](search/README.md)) tests a
+claim that gets oversold a lot: that doing **full-text and vector search on the same
+record** is a distinctive MongoDB advantage. It puts Postgres (`tsvector` + GIN, and
+the `pgvector` extension with HNSW) head-to-head with MongoDB (Atlas Search and Atlas
+Vector Search) on identical, seed-deterministic data — 5,000 documents, `dim` 256,
+top-10, 200 queries, mean of 3 trials, local Docker.
+
+| Mode | Metric | PostgreSQL | MongoDB |
+| --- | --- | ---: | ---: |
+| Vector | Recall@10 | 0.5730 ± 0.0035 | **0.9878 ± 0.0028** |
+| Vector | Latency p99 (ms) | **2.42 ± 0.40** | 4.58 ± 0.76 |
+| Vector | Throughput (qps) | **1,173 ± 60** | 354 ± 50 |
+| Full-text | Precision@10 | 1.000 | 1.000 |
+| Full-text | Latency p99 (ms) | 4.25 ± 0.68 | **3.44 ± 0.19** |
+| Full-text | Throughput (qps) | 402 ± 7 | **540 ± 91** |
+
+Three honest readings (consistent with threat #4 below):
+
+1. **"Postgres can't search the same record" is false** (fact). `tsvector` and
+   `pgvector` give Postgres full-text and vector search as columns on the same row,
+   in one transaction. "On the document" is **table stakes**, not a moat.
+2. **The vector numbers are a recall/latency trade, not a winner** (fact). At default
+   knobs Postgres was ~3x the throughput *but returned only ~57% of true neighbors*;
+   Atlas returned ~99%. ANN is approximate — latency without recall is meaningless,
+   so the benchmark always reports them together and exposes the `ef_search` /
+   `numCandidates` knobs to tune both to equal recall. That Atlas's *default* lands at
+   high recall is a genuine ergonomic point in its favor (opinion).
+3. **Two facts sharpen the platform claim, not the capability claim** (fact):
+   Postgres's search indexes are transactionally in-line, while Atlas Search/Vector
+   run on a separate, **eventually-consistent** `mongot` process. So MongoDB's real
+   edge here is the **unified, managed, scale-out platform** — one query language over
+   operational + text + vector data, embeddings co-located, multi-cloud — *not* an
+   exclusive capability and *not* stronger search consistency.
+
+This is the same lesson as the update probe, one layer up: sell the platform and the
+ergonomics, not a capability monopoly that doesn't survive a reproducible test.
 
 ---
 
@@ -100,9 +142,12 @@ is about protecting and widening it.
    mindshare every time a naive schema melts down in production.
 4. **Over-claiming on secondary capabilities.** Vector and Search are "good, and
    already here" — but against a dedicated engine at extreme scale they lose, and the
-   honest position says so. The aggregation framework is expressive but is **not** a
-   moat versus SQL with CTEs and window functions. Leading with these invites an
-   unflattering benchmark and erodes trust.
+   honest position says so. The repo's [search benchmark](search/README.md) makes this
+   concrete: Postgres does full-text *and* vector on the same row (`tsvector` /
+   `pgvector`), so "search on the document" is table stakes, and at default knobs
+   Postgres can even be faster (at lower recall). The aggregation framework is
+   expressive but is **not** a moat versus SQL with CTEs and window functions. Leading
+   with these invites an unflattering benchmark and erodes trust.
 5. **Licensing and ecosystem perception (SSPL).** The license keeps the hyperscalers
    at arm's length and nudges some teams toward "truly open" defaults. It is a chosen
    cost; the managed-platform value has to keep clearly outweighing it.
@@ -147,7 +192,11 @@ Search/Vector), which is what makes them credible rather than aspirational.
   story is the durable moat.
 - **Unify the "search + vector + operational data in one query path" story.** For app
   developers this is the consolidation pitch that actually lands today: one database,
-  one index, one query — no syncing embeddings to a separate vector store.
+  one query language — no syncing embeddings to a separate vector store. State it as
+  *consolidation*, not *exclusivity*: the [search benchmark](search/README.md) shows
+  Postgres can do the same on one row, so the win is the managed platform and
+  scale-out, and the honest caveat that Atlas Search/Vector are eventually consistent
+  via `mongot` while `pgvector` is transactional.
 
 ### C. Own the AI-native workload (the next "document model" bet)
 
@@ -175,10 +224,11 @@ Search/Vector), which is what makes them credible rather than aspirational.
 
 ### E. Narrative and trust (the cheapest, highest-leverage move)
 
-- **Compete on transparency.** Publish reproducible benchmarks like the one in this
-  repository — *including the cases MongoDB loses* — with the harness attached. A
-  vendor that shows its `DROP TABLE` is more believable than one that ships a glossy
-  bar chart.
+- **Compete on transparency.** Publish reproducible benchmarks like the *two* in this
+  repository — *including the cases MongoDB loses* (naive `jsonb` edging it on speed;
+  Postgres vector being faster at low recall) — with the harness attached. A vendor
+  that shows its `DROP TABLE` is more believable than one that ships a glossy bar
+  chart.
 - **Retire the wrong talking points.** Drop "edits bytes in place." Replace it with
   the accurate, still-compelling "it avoids the rewrite-and-vacuum tax and keeps the
   natural model efficient."
@@ -224,11 +274,33 @@ execution.
   snappy), so the storage comparison is apples-to-apples on compressed bytes.
 - **Scope/limits:** one workload, one machine, via Docker. It says nothing about
   reads, analytics, joins, or production tuning. It answers one narrow question
-  honestly. Tail latency (p99) was the noisiest metric; storage growth the most
-  stable.
+  honestly. Tail latency (p99) was the noisiest metric; the `normalized` and
+  MongoDB storage numbers were rock-steady, while `jsonb` growth swung with
+  autovacuum timing — but the order-of-magnitude gap never did.
 
-Full harness, CLI, and a FastAPI dashboard live in this repository — see
-[README.md](README.md) and the narrative writeup in [blog.md](blog.md).
+### A.2 Search benchmark methodology (the second probe)
+
+- **Workload:** 5,000 documents, each with text (`title`/`body`/`tags`/`category`)
+  *and* a `dim`-256 embedding on the same record; 200 deterministic queries; top-10.
+  Full-text via Postgres `tsvector` + GIN vs Atlas Search; vector via `pgvector` HNSW
+  vs Atlas `$vectorSearch`.
+- **Deterministic and model-free:** text is sampled from fixed per-category
+  vocabularies; embeddings are synthetic cluster-structured vectors, all seeded from
+  one integer. No embedding model, no download — it isolates *index* behavior, not a
+  model's quality.
+- **Independent ground truth:** exact brute-force cosine top-k (recall, vectors) and a
+  token-containment check (precision, full-text), computed in NumPy/Python so neither
+  database grades itself.
+- **Fairness control:** recall is always reported next to latency, and the `ef_search`
+  / `numCandidates` knobs are exposed so both engines can be tuned to a comparable
+  recall before comparing speed — the search analog of the `normalized` control.
+- **Honest limits:** Atlas Local does not expose the `mongot` index byte-size (so
+  index-size is one-sided); Atlas Search/Vector are eventually consistent with
+  `mongod`; the ranker comparison (BM25 vs `ts_rank`) is deliberately not crowned.
+
+Both harnesses, their CLIs, and FastAPI dashboards live in this repository — see
+[README.md](README.md), the per-angle [`basic/`](basic/README.md) /
+[`search/`](search/README.md) writeups, and the narrative in [blog.md](blog.md).
 
 ### B. Glossary
 

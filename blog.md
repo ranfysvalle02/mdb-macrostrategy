@@ -106,12 +106,12 @@ is fixed across trials, so the spread is measurement noise, not different data).
 
 | Metric | PostgreSQL (`jsonb`) | PostgreSQL (`normalized`) | MongoDB |
 | --- | ---: | ---: | ---: |
-| Throughput (ops/s) | 4,229 ± 265 | **10,417 ± 198** | 3,561 ± 128 |
-| Latency p50 (ms) | 0.832 | **0.360** | 0.872 |
-| Latency p99 (ms) | 2.596 ± 0.913 | **0.702 ± 0.134** | 3.173 ± 0.767 |
+| Throughput (ops/s) | 4,189 ± 180 | **10,264 ± 403** | 3,005 ± 581 |
+| Latency p50 (ms) | 0.834 | **0.356** | 0.990 |
+| Latency p99 (ms) | 2.813 ± 0.666 | **0.781 ± 0.151** | 4.642 ± 1.106 |
 | Storage before (MB) | 8.55 | 8.55 | 9.13 |
-| Storage after (MB) | 344.51 | 8.57 | 18.65 |
-| **Storage growth (MB)** | **+335.96 ± 0.02** | **+0.02** | **+9.51 ± 0.12** |
+| Storage after (MB) | 328.00 | 8.57 | 18.67 |
+| **Storage growth (MB)** | **+319.45 ± 36.93** | **+0.01** | **+9.53 ± 0.10** |
 
 Three findings — and I'll lead with the one that's least flattering to where I
 started.
@@ -119,21 +119,21 @@ started.
 ### 1. Idiomatic Postgres wins this micro-benchmark outright
 
 Promote the hot field to a column and the penalty doesn't shrink — it *vanishes*
-(+0.02 MB), and Postgres becomes the **fastest** option at ~10,400 ops/s with the
+(+0.01 MB), and Postgres becomes the **fastest** option at ~10,300 ops/s with the
 lowest p99 *and* the tightest run-to-run variance. The lesson is emphatically not
 "MongoDB beats Postgres." It's: don't bury a hot field inside a large TOASTed
 `jsonb`.
 
 ### 2. The JSONB penalty is real, and it's about storage, not speed
 
-Naive `jsonb` ballooned the TOAST table from ~8 MB to ~344 MB over 18k updates —
-roughly **40x write amplification**, and it was the single most reproducible number
-in the whole run (±0.02 MB across five trials). MongoDB grew ~9.5 MB doing the same
-work. That is a real, large, defensible gap.
+Naive `jsonb` ballooned the TOAST table from ~8.5 MB to ~328 MB over 18k updates —
+roughly **38x write amplification**. The absolute figure wobbles run to run as
+autovacuum reclaims on its own schedule (±37 MB here), but MongoDB grew only ~9.5 MB
+doing the same work. That is a real, large, defensible gap that never gets close.
 
 ### 3. On raw speed, naive `jsonb` actually edged MongoDB
 
-Postgres `jsonb` posted *higher* throughput (4,229 vs 3,561 ops/s) and a lower p99
+Postgres `jsonb` posted *higher* throughput (4,189 vs 3,005 ops/s) and a lower p99
 than MongoDB here — though the tail latency is noisy, so don't over-read it.
 MongoDB's advantage on this workload is overwhelmingly about avoiding bloat, not raw
 latency. Anyone selling you "MongoDB is faster" on this kind of workload is, at best,
@@ -164,13 +164,56 @@ trade-offs, which is exactly why the numbers matter more than the narrative.
 
 ---
 
+## Then I did it again, for search
+
+The other slogan I kept hearing was: *doing full-text and vector search "on the
+document" is a huge MongoDB advantage.* So I built a second angle (`search/`) and
+pointed the same discipline at it: a deterministic corpus of 5,000 documents, each
+carrying text **and** an embedding on the same record, indexed both ways on both
+engines — Postgres with `tsvector` + GIN and the `pgvector` HNSW extension, MongoDB
+with Atlas Search and Atlas Vector Search. Recall and precision scored against a
+ground truth computed in NumPy so neither database grades its own homework.
+
+The first finding deflates the slogan: **Postgres does this on the same row too.**
+`tsvector` and `pgvector` are columns next to your data, queried in one `SELECT`,
+inside one transaction. "On the document" is table stakes, not a moat.
+
+The vector numbers were the interesting part, and they're a trap if you read only
+one column. At default knobs Postgres did ~1,170 queries/sec to MongoDB's ~355 — but
+Postgres was only returning **57% of the true nearest neighbors** while Atlas
+returned **99%**. Approximate nearest neighbor is *approximate*; a fast config is
+usually just a low-recall config. Quote the latency without the recall and you've
+proved nothing. (Turn the Postgres `ef_search` knob up to match recall and its
+latency climbs toward Atlas's — that's the honest comparison, and it's a knob in the
+CLI.) Worth saying plainly: Atlas landing at 99% recall *by default* is a real
+ergonomic point in MongoDB's favor — the same "the default is the right path" theme
+as the update probe.
+
+Full-text? Both engines returned only genuinely-matching documents (precision 1.0);
+they just rank differently (BM25 vs `ts_rank`), which isn't something a benchmark
+without labeled relevance judgments gets to crown. The differences were latency and
+build time, in both directions.
+
+And one fact that reframes the whole "on the document" pitch: MongoDB's search isn't
+literally in the storage engine. Atlas Search and Vector Search run on a separate
+Lucene process (`mongot`) fed by change streams, so they're **eventually consistent**
+with your writes — while Postgres's `tsvector`/`pgvector` indexes are transactionally
+in-line. So the honest MongoDB edge for search is the *unified, managed, scale-out
+platform* (one query language over operational + text + vector data, embeddings
+co-located, multi-cloud), not an exclusive capability and not stronger consistency.
+Same shape of conclusion as the update probe, one layer up.
+
+---
+
 ## Things I had to get right to not fool myself
 
 - **A 32 KB document, on purpose.** Smaller values stay inline and never hit TOAST;
   the penalty would quietly disappear and I'd "prove" the wrong thing.
-- **Five trials, with the stdev reported.** A single run hides run-to-run noise. The
-  tail latency (p99) turned out to be the noisiest metric and storage growth the most
-  stable — exactly the kind of thing a one-shot number would have let me overclaim.
+- **Five trials, with the stdev reported.** A single run hides run-to-run noise. Tail
+  latency (p99) turned out to be the noisiest metric; the `normalized` and MongoDB
+  storage numbers were rock-steady, while the `jsonb` bloat itself wobbled with
+  autovacuum timing — but never close to the others. Exactly the kind of thing a
+  one-shot number would have let me overclaim.
 - **A fairness control (`normalized`).** Without it, this is propaganda.
 - **autovacuum left on.** The realistic default. It reclaims dead tuples lazily, but
   the TOAST table had already grown — only `VACUUM FULL` returns space to the OS.
@@ -183,27 +226,32 @@ trade-offs, which is exactly why the numbers matter more than the narrative.
 
 ## Run it yourself
 
-The whole thing is a small repo: two importable benchmark cores, thin CLIs, and a
-FastAPI dashboard that runs both engines with a live progress stream and charts the
-throughput / p99 / storage-growth comparison.
+The repo is split into two self-contained angles — `basic/` (this update probe) and
+`search/` (the search probe) — each with its own docker-compose stack, CLIs, and a
+FastAPI dashboard that runs both engines with a live progress stream.
 
 ```bash
-docker compose up -d          # Postgres 16 + MongoDB 8.3 (Atlas Local)
+# Angle 1: the update penalty
+docker compose -f basic/docker-compose.yml up -d            # Postgres 16 + Atlas Local
+uv run python -m basic.demo_psql --trials 5                 # jsonb
+uv run python -m basic.demo_psql --strategy normalized --trials 5  # the fair fight
+uv run python -m basic.demo_mdb --trials 5
+uv run python -m basic.compare
+uv run uvicorn basic.app:app --reload                       # http://localhost:8000
 
-# CLI (--trials N reports mean +/- stdev)
-uv run python demo-psql.py --trials 5                       # jsonb
-uv run python demo-psql.py --strategy normalized --trials 5 # the fair fight
-uv run python demo-mdb.py --trials 5
-uv run python compare.py
-
-# ...or the dashboard
-uv run uvicorn app:app --reload                            # http://localhost:8000
+# Angle 2: search on the document
+docker compose -f search/docker-compose.yml up -d           # pgvector + Atlas Local
+uv run python -m search.demo_psql_search --mode vector --trials 3
+uv run python -m search.demo_mdb_search  --mode vector --trials 3
+uv run python -m search.compare_search
+uv run uvicorn search.app:app --reload --port 8001          # http://localhost:8001
 ```
 
-It's deliberately bound to its own docker-compose stack on non-standard ports
-(`55432` / `57017`) because it drops and recreates its table and collection on every
-run — a benchmark with `DROP` in it has no business connecting to whatever database
-happens to be on `5432`.
+Each angle is deliberately bound to its own docker-compose stack on non-standard,
+*distinct* ports (basic `55432`/`57017`, search `55433`/`57018`) because both drop
+and recreate their table and collection on every run — a benchmark with `DROP` in it
+has no business connecting to whatever database happens to be on `5432`. The distinct
+ports also mean you can run both angles at once.
 
 ---
 

@@ -1,47 +1,38 @@
-"""Shared benchmark harness: config, seeded data generation, and stats.
+"""Basic-angle config, seeded document generation, and update-result types.
 
-This module is intentionally dependency-free (stdlib only) so that both the
-Postgres and MongoDB cores, the CLI entrypoints, and the FastAPI app can import
-it without pulling in a database driver they do not need.
+This is the update-penalty workload: large documents whose hot fields are
+mutated many times. The engine-agnostic statistics live in ``shared.common``;
+this module holds only what is specific to the update benchmark -- including the
+connection endpoints, which are pinned to the ``basic/`` docker-compose stack.
 """
 
 from __future__ import annotations
 
 import json
-import math
-import os
 import random
-import statistics
-import string
-import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any
 
-# A progress hook receives (phase_label, fraction_complete in [0, 1]).
-ProgressFn = Optional[Callable[[str, float], None]]
+from shared.common import _WORDS, _agg, _word, render_table
 
-# Connection targets are pinned to the bundled docker-compose stack on purpose.
-# This benchmark DROPs its table/collection on every run, so it must never be
-# pointed at an arbitrary database. There are intentionally no environment-variable
-# or CLI overrides. To change endpoints, edit docker-compose.yml and these
-# constants together (the host ports are non-standard for the same safety reason).
+# Connection targets are pinned to the bundled basic/ docker-compose stack on
+# purpose. This benchmark DROPs its table/collection on every run, so it must
+# never be pointed at an arbitrary database. There are intentionally no
+# environment-variable or CLI overrides. To change endpoints, edit
+# basic/docker-compose.yml and these constants together (the host ports are
+# non-standard for the same safety reason, and differ from the search/ stack).
 PG_DSN = "host=localhost port=55432 dbname=bench user=postgres password=postgres"
 MONGO_URI = "mongodb://localhost:57017/?directConnection=true"
 MONGO_DB = "bench"
 
 
-def _emit(progress: ProgressFn, phase: str, frac: float) -> None:
-    if progress is not None:
-        progress(phase, max(0.0, min(1.0, frac)))
-
-
 @dataclass
 class BenchConfig:
-    """Everything needed to run one benchmark.
+    """Everything needed to run one update-penalty benchmark.
 
-    Connection endpoints are fixed to the docker-compose stack (see the module
-    constants above) and are intentionally not configurable; only the workload
-    shape is tunable.
+    Connection endpoints are fixed to the basic/ docker-compose stack (see the
+    module constants above) and are intentionally not configurable; only the
+    workload shape is tunable.
     """
 
     rows: int = 500
@@ -112,17 +103,6 @@ class BenchResult:
 # Deterministic large-document generation
 # --------------------------------------------------------------------------- #
 
-_WORDS = [
-    "atlas", "vector", "shard", "replica", "oplog", "wired", "tiger", "index",
-    "pipeline", "cluster", "tundra", "ember", "quartz", "nimbus", "vertex",
-    "cobalt", "zephyr", "onyx", "raptor", "lumen", "cipher", "delta", "echo",
-]
-
-
-def _word(rng: random.Random, n: int = 6) -> str:
-    return "".join(rng.choice(string.ascii_lowercase) for _ in range(n))
-
-
 def make_document(doc_kb: int, rng: random.Random) -> dict[str, Any]:
     """Build a ~doc_kb KB nested document with a hot `stats` sub-object.
 
@@ -179,60 +159,8 @@ def make_document(doc_kb: int, rng: random.Random) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Latency statistics
-# --------------------------------------------------------------------------- #
-
-def _percentile(sorted_vals: list[float], p: float) -> float:
-    if not sorted_vals:
-        return 0.0
-    if len(sorted_vals) == 1:
-        return sorted_vals[0]
-    k = (len(sorted_vals) - 1) * p
-    lo = math.floor(k)
-    hi = math.ceil(k)
-    if lo == hi:
-        return sorted_vals[int(k)]
-    return sorted_vals[lo] * (hi - k) + sorted_vals[hi] * (k - lo)
-
-
-def summarize_latencies(latencies_s: list[float]) -> dict[str, float]:
-    """Convert a list of per-op latencies (seconds) into ms summary stats."""
-    if not latencies_s:
-        return {"mean": 0.0, "p50": 0.0, "p95": 0.0, "p99": 0.0, "max": 0.0}
-    ms = sorted(v * 1000.0 for v in latencies_s)
-    return {
-        "mean": sum(ms) / len(ms),
-        "p50": _percentile(ms, 0.50),
-        "p95": _percentile(ms, 0.95),
-        "p99": _percentile(ms, 0.99),
-        "max": ms[-1],
-    }
-
-
-def split_ops(total: int, workers: int) -> list[int]:
-    """Divide `total` ops as evenly as possible across `workers`."""
-    workers = max(1, workers)
-    base = total // workers
-    rem = total % workers
-    return [base + (1 if i < rem else 0) for i in range(workers)]
-
-
-def now() -> float:
-    return time.perf_counter()
-
-
-# --------------------------------------------------------------------------- #
 # Multi-trial aggregation
 # --------------------------------------------------------------------------- #
-
-def _agg(values: list[float]) -> dict[str, float]:
-    """mean / sample-stdev / coefficient-of-variation for a list of trial values."""
-    n = len(values)
-    mean = sum(values) / n if n else 0.0
-    sd = statistics.stdev(values) if n >= 2 else 0.0
-    cv = (sd / mean * 100.0) if mean else 0.0
-    return {"mean": mean, "stdev": sd, "cv": cv}
-
 
 def aggregate_trials(results: list["BenchResult"]) -> "BenchResult":
     """Collapse N per-trial results into one whose scalar fields are the trial
@@ -307,22 +235,8 @@ def compatibility_warnings(results: list[dict[str, Any]]) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
-# Result persistence + console rendering
+# Console rendering
 # --------------------------------------------------------------------------- #
-
-def write_result(result: BenchResult, path: Optional[str] = None) -> str:
-    path = path or f"results-{result.slug()}.json"
-    with open(path, "w") as f:
-        json.dump(result.to_dict(), f, indent=2)
-    return path
-
-
-def load_result(path: str) -> Optional[dict[str, Any]]:
-    if not os.path.exists(path):
-        return None
-    with open(path) as f:
-        return json.load(f)
-
 
 def print_result(result: BenchResult) -> None:
     lat = result.latency_ms
@@ -356,8 +270,4 @@ def print_result(result: BenchResult) -> None:
             if a:
                 val = f"{a['mean']:,.3f} +/- {a['stdev']:,.3f} {unit} (cv {a['cv']:.1f}%)"
                 rows.append((f"  {metric}", val))
-    width = max(len(k) for k, _ in rows)
-    print("-" * (width + 30))
-    for k, v in rows:
-        print(f"{k.rjust(width)} : {v}")
-    print("-" * (width + 30))
+    render_table(rows)

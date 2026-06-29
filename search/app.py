@@ -1,12 +1,16 @@
-"""FastAPI dashboard for the JSONB-vs-MongoDB update-penalty benchmark.
+"""FastAPI dashboard for the search angle (full-text + vector on the same record).
 
-Run (databases must be up via `docker compose up -d`):
-    uv run uvicorn app:app --reload
+Run (the search/ stack must be up):
+    docker compose -f search/docker-compose.yml up -d
+    uv run uvicorn search.app:app --reload --port 8001
 
-Then open http://localhost:8000
+Then open http://localhost:8001
 
-The HTTP layer is a thin shell over the same cores the CLI uses (bench_pg /
-bench_mongo); the benchmark logic lives there, not here.
+The HTTP layer is a thin shell over the same cores the CLI uses
+(search.bench.pg_search / search.bench.mongo_search); the benchmark logic lives
+there, not here. Each run rebuilds the deterministic corpus from the seed, so
+both engines index byte-for-byte identical data and are scored against the same
+ground truth.
 """
 
 from __future__ import annotations
@@ -23,46 +27,48 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from bench import BenchConfig, BenchResult
-from bench import mongo as bench_mongo
-from bench import pg as bench_pg
+from search.bench import SearchConfig, SearchResult
+from search.bench import mongo_search as bench_mongo
+from search.bench import pg_search as bench_pg
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="MongoDB vs PostgreSQL JSONB Update Penalty")
+app = FastAPI(title="MongoDB vs PostgreSQL: full-text + vector search")
 
 # Each run DROPs and recreates the shared table/collection, so two concurrent
 # runs would corrupt each other's measurements. Allow only one at a time.
 _run_lock = threading.Lock()
 
 
-class BenchParams(BaseModel):
-    rows: int = 500
-    ops: int = 20_000
-    workers: int = 4
-    doc_kb: int = 32
+class SearchParams(BaseModel):
+    mode: str = "vector"
+    corpus_size: int = 5000
+    dim: int = 256
+    k: int = 10
+    n_queries: int = 200
     seed: int = 1234
     trials: int = 1
-    pg_strategy: str = "jsonb"
-    pg_autovacuum: bool = True
+    pg_hnsw_ef_search: int = 40
+    mongo_num_candidates: int = 100
 
 
-def _result_dict(r: BenchResult) -> dict[str, Any]:
+def _result_dict(r: SearchResult) -> dict[str, Any]:
     d = r.to_dict()
     d["slug"] = r.slug()
     return d
 
 
-def _config_from_params(p: BenchParams) -> BenchConfig:
-    return BenchConfig(
-        rows=p.rows,
-        ops=p.ops,
-        workers=p.workers,
-        doc_kb=p.doc_kb,
+def _config_from_params(p: SearchParams) -> SearchConfig:
+    return SearchConfig(
+        mode=p.mode,
+        corpus_size=p.corpus_size,
+        dim=p.dim,
+        k=p.k,
+        n_queries=p.n_queries,
         seed=p.seed,
         trials=p.trials,
-        pg_strategy=p.pg_strategy,
-        pg_autovacuum=p.pg_autovacuum,
+        pg_hnsw_ef_search=p.pg_hnsw_ef_search,
+        mongo_num_candidates=p.mongo_num_candidates,
     )
 
 
@@ -74,7 +80,7 @@ def _pg_ok() -> bool:
     import psycopg
 
     try:
-        with psycopg.connect(BenchConfig().pg_dsn, connect_timeout=2) as conn:
+        with psycopg.connect(SearchConfig().pg_dsn, connect_timeout=2) as conn:
             conn.execute("SELECT 1")
         return True
     except Exception:
@@ -85,7 +91,7 @@ def _mongo_ok() -> bool:
     from pymongo import MongoClient
 
     try:
-        client = MongoClient(BenchConfig().mongo_uri, serverSelectionTimeoutMS=2000)
+        client = MongoClient(SearchConfig().mongo_uri, serverSelectionTimeoutMS=2000)
         client.admin.command("ping")
         client.close()
         return True
@@ -105,8 +111,8 @@ async def health() -> dict[str, bool]:
 # Benchmark (blocking) and streaming (SSE) variants
 # --------------------------------------------------------------------------- #
 
-@app.post("/api/benchmark")
-async def benchmark(params: BenchParams) -> dict[str, Any]:
+@app.post("/api/search-benchmark")
+async def search_benchmark(params: SearchParams) -> dict[str, Any]:
     cfg = _config_from_params(params)
     if not _run_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="A benchmark is already running")
@@ -122,22 +128,24 @@ async def benchmark(params: BenchParams) -> dict[str, Any]:
     }
 
 
-@app.get("/api/benchmark/stream")
-async def benchmark_stream(
+@app.get("/api/search-benchmark/stream")
+async def search_benchmark_stream(
     request: Request,
-    rows: int = 500,
-    ops: int = 20_000,
-    workers: int = 4,
-    doc_kb: int = 32,
+    mode: str = "vector",
+    corpus_size: int = 5000,
+    dim: int = 256,
+    k: int = 10,
+    n_queries: int = 200,
     seed: int = 1234,
     trials: int = 1,
-    pg_strategy: str = "jsonb",
-    pg_autovacuum: bool = True,
+    pg_hnsw_ef_search: int = 40,
+    mongo_num_candidates: int = 100,
 ) -> StreamingResponse:
     cfg = _config_from_params(
-        BenchParams(
-            rows=rows, ops=ops, workers=workers, doc_kb=doc_kb, seed=seed,
-            trials=trials, pg_strategy=pg_strategy, pg_autovacuum=pg_autovacuum,
+        SearchParams(
+            mode=mode, corpus_size=corpus_size, dim=dim, k=k, n_queries=n_queries,
+            seed=seed, trials=trials, pg_hnsw_ef_search=pg_hnsw_ef_search,
+            mongo_num_candidates=mongo_num_candidates,
         )
     )
     q: "queue.Queue[dict[str, Any]]" = queue.Queue()

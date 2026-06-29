@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from bench import compatibility_warnings, workload_key
+from basic.bench import compatibility_warnings, workload_key
 
 
 def _r(rows: int, doc_kb: int, workers: int, slug: str) -> dict:

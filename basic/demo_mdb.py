@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """CLI: run the MongoDB field-level update benchmark.
 
-Thin wrapper around the importable core in ``bench_mongo.py`` so the CLI and the
-FastAPI dashboard run identical code.
+Thin wrapper around the importable core in ``basic/bench/mongo.py`` so the CLI
+and the FastAPI dashboard run identical code.
 
 Examples:
-    uv run python demo-mdb.py
-    uv run python demo-mdb.py --rows 1000 --ops 40000 --workers 8 --doc-kb 32
+    uv run python -m basic.demo_mdb
+    uv run python -m basic.demo_mdb --rows 1000 --ops 40000 --workers 8 --doc-kb 32
 """
 
 from __future__ import annotations
 
 import argparse
 
-from bench import BenchConfig, print_result, write_result
-from bench.mongo import run as run_mongo
+from basic.bench import BenchConfig, print_result, write_result
+from basic.bench.mongo import run as run_mongo
 
 
 def main() -> None:

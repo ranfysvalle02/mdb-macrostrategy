@@ -1,7 +1,7 @@
 """MongoDB benchmark core: field-level updates on large documents.
 
 Entrypoint: ``run(config, progress) -> BenchResult``. Imported by the
-`demo-mdb.py` CLI and the FastAPI app so they share a single implementation.
+`basic.demo_mdb` CLI and the FastAPI app so they share a single implementation.
 """
 
 from __future__ import annotations
@@ -12,13 +12,15 @@ from typing import Any
 
 from pymongo import MongoClient
 
-from bench.common import (
+from basic.bench.common import (
     BenchConfig,
     BenchResult,
-    ProgressFn,
-    _emit,
     aggregate_trials,
     make_document,
+)
+from shared.common import (
+    ProgressFn,
+    _emit,
     now,
     split_ops,
     summarize_latencies,

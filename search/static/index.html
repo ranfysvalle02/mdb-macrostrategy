@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Search &mdash; full-text + vector on the same record</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="title">
+      <h1>Search on the Document</h1>
+      <p class="subtitle">A reproducible benchmark: PostgreSQL (<code>tsvector</code> + <code>pgvector</code>) vs MongoDB Atlas Search &amp; Vector Search &mdash; full-text and vector retrieval over the same record. Recall is reported next to latency, because ANN that ignores recall is just a fast wrong answer.</p>
+    </div>
+    <div class="health" id="health">
+      <span class="badge" id="health-pg" data-state="unknown">PostgreSQL</span>
+      <span class="badge" id="health-mongo" data-state="unknown">MongoDB</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card controls">
+      <h2>Workload</h2>
+      <div class="grid">
+        <label>Mode
+          <select id="mode">
+            <option value="vector">vector (ANN: pgvector HNSW vs $vectorSearch)</option>
+            <option value="fts">full-text (tsvector/GIN vs Atlas Search)</option>
+          </select>
+        </label>
+        <label>Documents (corpus)
+          <input type="number" id="corpus_size" value="5000" min="200" step="500" />
+        </label>
+        <label>Embedding dim
+          <input type="number" id="dim" value="256" min="8" max="2048" step="8" />
+        </label>
+        <label>Top-k
+          <input type="number" id="k" value="10" min="1" max="100" />
+        </label>
+        <label>Queries
+          <input type="number" id="n_queries" value="200" min="10" step="10" />
+        </label>
+        <label>Seed
+          <input type="number" id="seed" value="1234" />
+        </label>
+        <label>Trials (mean &plusmn; stdev)
+          <input type="number" id="trials" value="1" min="1" max="20" />
+        </label>
+        <label>PG HNSW ef_search
+          <input type="number" id="pg_hnsw_ef_search" value="40" min="1" max="1000" />
+        </label>
+        <label>Mongo numCandidates
+          <input type="number" id="mongo_num_candidates" value="100" min="1" max="10000" />
+        </label>
+      </div>
+      <div class="actions">
+        <button id="run" class="primary">Run benchmark</button>
+        <span id="status" class="status"></span>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-bar" id="progress"></div>
+      </div>
+      <p class="phase" id="phase"></p>
+    </section>
+
+    <section class="card results" id="results-card" hidden>
+      <h2>Results</h2>
+      <div class="charts">
+        <div class="chart-box"><canvas id="chart-recall"></canvas></div>
+        <div class="chart-box"><canvas id="chart-latency"></canvas></div>
+        <div class="chart-box"><canvas id="chart-build"></canvas></div>
+      </div>
+      <div class="table-wrap">
+        <table id="results-table">
+          <thead><tr><th>Metric</th><th class="pg">PostgreSQL</th><th class="mongo">MongoDB</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card methodology">
+      <details>
+        <summary>Methodology &amp; Caveats (read me)</summary>
+        <ul>
+          <li><strong>What this measures:</strong> query latency, queries/sec, index build time, and <strong>recall@k against a precomputed ground truth</strong> &mdash; exact brute-force cosine top-k for vectors, a deterministic TF-IDF top-k for full-text. Both engines index byte-for-byte identical, seed-deterministic data.</li>
+          <li><strong>Why recall is shown next to latency:</strong> vector search is <em>approximate</em>. A low <code>ef_search</code> / <code>numCandidates</code> buys speed by returning a worse answer. The only honest comparison tunes both knobs toward a comparable recall, then compares latency. Those knobs are the fairness controls &mdash; this is the search analog of the basic angle's <code>normalized</code> Postgres control.</li>
+          <li><strong>Full-text is a lexical-overlap signal, not a relevance verdict:</strong> Postgres <code>ts_rank_cd</code> and Atlas Search BM25 rank differently, so expect high-but-not-perfect overlap with the shared lexical reference. Both run OR-semantics over a non-stemming analyzer so the comparison is apples-to-apples on tokens.</li>
+          <li><strong>The honest framing:</strong> both engines do search <em>on the same record</em> &mdash; this is not unique to MongoDB. Postgres keeps its <code>tsvector</code>/<code>pgvector</code> indexes transactionally in-line; Atlas Search/Vector run on a separate <code>mongot</code> process and are <em>eventually consistent</em> with <code>mongod</code>. MongoDB's edge here is the unified managed platform and scale-out, not an exclusive capability. The mongot index byte-size is not exposed by Atlas Local, so index-size is reported one-sided.</li>
+          <li><strong>Scope:</strong> one workload on a single machine via Docker. Your numbers will differ; that is the point &mdash; run it yourself.</li>
+        </ul>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <span>All figures are measured locally &mdash; nothing here is hand-written.</span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

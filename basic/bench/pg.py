@@ -1,7 +1,7 @@
 """PostgreSQL benchmark core: the JSONB partial-update penalty under test.
 
 Entrypoint: ``run(config, progress) -> BenchResult``. Imported by the
-`demo-psql.py` CLI and the FastAPI app so they share a single implementation.
+`basic.demo_psql` CLI and the FastAPI app so they share a single implementation.
 """
 
 from __future__ import annotations
@@ -13,13 +13,15 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Json
 
-from bench.common import (
+from basic.bench.common import (
     BenchConfig,
     BenchResult,
-    ProgressFn,
-    _emit,
     aggregate_trials,
     make_document,
+)
+from shared.common import (
+    ProgressFn,
+    _emit,
     now,
     split_ops,
     summarize_latencies,

@@ -12,9 +12,9 @@ import math
 
 import pytest
 
-from bench import BenchConfig
-from bench import mongo as bench_mongo
-from bench import pg as bench_pg
+from basic.bench import BenchConfig
+from basic.bench import mongo as bench_mongo
+from basic.bench import pg as bench_pg
 
 pytestmark = pytest.mark.integration
 

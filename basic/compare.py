@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""CLI: render a side-by-side table from saved benchmark results.
+"""CLI: render a side-by-side table from saved basic-angle benchmark results.
+
+Run as a module from the repo root:
+    uv run python -m basic.compare
 
 Reads whichever of these exist in the current directory and prints a comparison:
     results-psql.json             (PostgreSQL, jsonb strategy)
@@ -11,7 +14,7 @@ All numbers come from actual runs; nothing here is synthesized.
 
 from __future__ import annotations
 
-from bench import compatibility_warnings, load_result
+from basic.bench import compatibility_warnings, load_result
 
 FILES = [
     "results-psql.json",
@@ -23,7 +26,7 @@ FILES = [
 def main() -> None:
     results = [r for r in (load_result(f) for f in FILES) if r is not None]
     if not results:
-        print("No result files found. Run demo-psql.py and demo-mdb.py first.")
+        print("No result files found. Run -m basic.demo_psql and -m basic.demo_mdb first.")
         return
 
     first = results[0]

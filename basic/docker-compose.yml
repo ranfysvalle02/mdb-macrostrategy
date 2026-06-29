@@ -1,4 +1,4 @@
-# Provisions the two databases the benchmark compares.
+# Provisions the two databases the BASIC angle compares (JSONB update penalty).
 #
 # Notes:
 # - Postgres uses the container's normal writable layer (NOT tmpfs) so its write
@@ -13,12 +13,15 @@
 #   The benchmark DROPs its table/collection on every run, so it is bound to this
 #   stack on purpose -- non-standard ports mean it cannot accidentally connect to
 #   a real Postgres/MongoDB you happen to be running locally. These ports must
-#   match the constants in bench/common.py.
+#   match the constants in basic/bench/common.py. The search/ stack uses a
+#   different pair (55433 / 57018) so both angles can run side by side.
+# - Container names are prefixed `macrostrategy-basic-*` so they never collide
+#   with the search/ stack's `macrostrategy-search-*` containers.
 
 services:
   postgres:
     image: postgres:16
-    container_name: macrostrategy-postgres
+    container_name: macrostrategy-basic-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -33,7 +36,7 @@ services:
 
   mongodb:
     image: mongodb/mongodb-atlas-local:8.3
-    container_name: macrostrategy-atlas
+    container_name: macrostrategy-basic-atlas
     environment:
       DO_NOT_TRACK: "1"
     ports:
